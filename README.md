@@ -1,0 +1,2 @@
+# AI-POWERED-COLLABORATIVE-VECTOR-WHITEBOARD-WITH-REAL-TIME-SKETCH-RECOGINITION
+An AI-powered collaborative smart whiteboard for real-time drawing, brainstorming, and teamwork. Features include AI-based sketch recognition using CNN, sketch-to-vector conversion, WebSocket collaboration, folder organization, board sharing, MySQL database, and Quadtree-based canvas optimization for efficient object management.
