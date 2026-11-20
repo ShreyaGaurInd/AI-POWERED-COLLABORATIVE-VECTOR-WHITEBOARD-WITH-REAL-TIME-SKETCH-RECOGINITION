@@ -1,0 +1,297 @@
+// Prisma Schema for Collaborative Smart Whiteboard
+// Database: MySQL 8.0+
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// -------------------------------------------------------------
+// 1. User Model
+// Handles authentication credentials and user profile information.
+// Password is stored strictly as a bcrypt hash.
+// -------------------------------------------------------------
+model User {
+  id                  String    @id @default(uuid())
+  email               String    @unique
+  passwordHash        String    @map("password_hash")
+  fullName            String    @map("full_name")
+  avatarColor         String    @default("#6366f1") @map("avatar_color") // Default indigo
+  isVerified          Boolean   @default(false) @map("is_verified")
+  verificationCode    String?   @map("verification_code")
+  verificationExpires DateTime? @map("verification_expires")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  // Relationships
+  ownedBoards         Whiteboard[]         @relation("OwnerWhiteboards")
+  folders             Folder[]
+  memberships         WhiteboardMember[]
+  sentFriendships     Friendship[]         @relation("SentFriendships")
+  receivedFriendships Friendship[]         @relation("ReceivedFriendships")
+  sentMessages        DirectMessage[]      @relation("SentMessages")
+  receivedMessages    DirectMessage[]      @relation("ReceivedMessages")
+  boardChatMessages   BoardChatMessage[]
+  boardTodoItems      BoardTodoItem[]
+
+  @@map("users")
+}
+
+// -------------------------------------------------------------
+// 2. Folder Model
+// Enables Canva-like organizational hierarchy for whiteboards.
+// -------------------------------------------------------------
+model Folder {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  name      String
+  color     String   @default("#3b82f6") // Folder accent color
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  whiteboards Whiteboard[]
+
+  @@index([userId])
+  @@map("folders")
+}
+
+// -------------------------------------------------------------
+// 3. Whiteboard Model
+// Represents a collaborative canvas space.
+// If isProtected = true, passwordHash stores a bcrypt hash of the board password.
+// -------------------------------------------------------------
+model Whiteboard {
+  id           String   @id @default(uuid())
+  ownerId      String   @map("owner_id")
+  folderId     String?  @map("folder_id") // Nullable: boards can exist at root level
+  title        String   @default("Untitled Whiteboard")
+  passwordHash String?  @map("password_hash") // Optional board protection password
+  isProtected  Boolean  @default(false) @map("is_protected")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  owner          User               @relation("OwnerWhiteboards", fields: [ownerId], references: [id], onDelete: Cascade)
+  folder         Folder?            @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  members        WhiteboardMember[]
+  drawingObjects DrawingObject[]
+  textObjects    TextObject[]
+  stickers       Sticker[]
+  chatMessages   BoardChatMessage[]
+  todoItems      BoardTodoItem[]
+
+  @@index([ownerId])
+  @@index([folderId])
+  @@map("whiteboards")
+}
+
+// -------------------------------------------------------------
+// 4. WhiteboardMember Model (Role-Based Access Control)
+// Represents shared access permissions: OWNER, EDITOR, VIEWER.
+// -------------------------------------------------------------
+enum BoardRole {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
+model WhiteboardMember {
+  id        String    @id @default(uuid())
+  boardId   String    @map("board_id")
+  userId    String    @map("user_id")
+  role      BoardRole @default(VIEWER)
+  invitedAt DateTime  @default(now()) @map("invited_at")
+
+  // Relationships
+  board Whiteboard @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([boardId, userId]) // Fast O(1) permission check & prevents duplicates
+  @@index([userId])
+  @@map("whiteboard_members")
+}
+
+// -------------------------------------------------------------
+// 5. DrawingObject Model
+// Represents freehand strokes and AI-converted vector shapes.
+// Stores min/max bounding coordinates for fast Quadtree rebuild & spatial queries.
+// -------------------------------------------------------------
+enum ShapeType {
+  FREEHAND
+  RECTANGLE
+  CIRCLE
+  TRIANGLE
+  STAR
+  ARROW
+}
+
+model DrawingObject {
+  id          String    @id @default(uuid())
+  boardId     String    @map("board_id")
+  type        ShapeType @default(FREEHAND)
+  points      Json // Array of [x, y, pressure] points
+  strokeColor String    @default("#000000") @map("stroke_color")
+  strokeWidth Float     @default(3.0) @map("stroke_width")
+  opacity     Float     @default(1.0)
+  minX        Float     @map("min_x")
+  minY        Float     @map("min_y")
+  maxX        Float     @map("max_x")
+  maxY        Float     @map("max_y")
+  zIndex      Int       @default(0) @map("z_index")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  // Relationships
+  board Whiteboard @relation(fields: [boardId], references: [id], onDelete: Cascade)
+
+  @@index([boardId])
+  @@index([boardId, minX, minY, maxX, maxY]) // Spatial query optimization
+  @@map("drawing_objects")
+}
+
+// -------------------------------------------------------------
+// 6. TextObject Model
+// Represents editable text boxes on the canvas.
+// -------------------------------------------------------------
+model TextObject {
+  id         String   @id @default(uuid())
+  boardId    String   @map("board_id")
+  x          Float
+  y          Float
+  width      Float    @default(200.0)
+  height     Float    @default(60.0)
+  content    String   @db.Text
+  fontFamily String   @default("Inter") @map("font_family")
+  fontSize   Int      @default(20) @map("font_size")
+  fontColor  String   @default("#000000") @map("font_color")
+  rotation   Float    @default(0.0)
+  zIndex     Int      @default(0) @map("z_index")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  board Whiteboard @relation(fields: [boardId], references: [id], onDelete: Cascade)
+
+  @@index([boardId])
+  @@map("text_objects")
+}
+
+// -------------------------------------------------------------
+// 7. Sticker Model
+// Represents sticky notes and brainstorm stickers on the canvas.
+// -------------------------------------------------------------
+model Sticker {
+  id        String   @id @default(uuid())
+  boardId   String   @map("board_id")
+  x         Float
+  y         Float
+  width     Float    @default(180.0)
+  height    Float    @default(180.0)
+  noteText  String   @map("note_text") @db.Text
+  bgColor   String   @default("#fef08a") @map("bg_color") // Sticky yellow
+  rotation  Float    @default(0.0)
+  zIndex    Int      @default(0) @map("z_index")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  board Whiteboard @relation(fields: [boardId], references: [id], onDelete: Cascade)
+
+  @@index([boardId])
+  @@map("stickers")
+}
+
+// -------------------------------------------------------------
+// 8. Friendship Model
+// Manages friend requests and friend connections between users.
+// -------------------------------------------------------------
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+model Friendship {
+  id         String           @id @default(uuid())
+  senderId   String           @map("sender_id")
+  receiverId String           @map("receiver_id")
+  status     FriendshipStatus @default(PENDING)
+  createdAt  DateTime         @default(now()) @map("created_at")
+  updatedAt  DateTime         @updatedAt @map("updated_at")
+
+  // Relationships
+  sender   User @relation("SentFriendships", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver User @relation("ReceivedFriendships", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@unique([senderId, receiverId])
+  @@index([senderId])
+  @@index([receiverId])
+  @@map("friendships")
+}
+
+// -------------------------------------------------------------
+// 9. DirectMessage Model
+// 1-on-1 private messaging between friends with persistent history.
+// -------------------------------------------------------------
+model DirectMessage {
+  id         String   @id @default(uuid())
+  senderId   String   @map("sender_id")
+  receiverId String   @map("receiver_id")
+  message    String   @db.Text
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  // Relationships
+  sender   User @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver User @relation("ReceivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@index([senderId, receiverId])
+  @@map("direct_messages")
+}
+
+// -------------------------------------------------------------
+// 10. BoardChatMessage Model
+// Real-time collaborative chat room tied to a whiteboard canvas.
+// Persisted so chat history remains when exiting & re-entering.
+// -------------------------------------------------------------
+model BoardChatMessage {
+  id        String   @id @default(uuid())
+  boardId   String   @map("board_id")
+  userId    String   @map("user_id")
+  message   String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relationships
+  board Whiteboard @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([boardId, createdAt])
+  @@map("board_chat_messages")
+}
+
+// -------------------------------------------------------------
+// 11. BoardTodoItem Model
+// Collaborative action items / to-do checklist for a whiteboard.
+// Persisted so tasks and completion states remain on reload.
+// -------------------------------------------------------------
+model BoardTodoItem {
+  id        String   @id @default(uuid())
+  boardId   String   @map("board_id")
+  userId    String   @map("user_id")
+  task      String   @db.VarChar(500)
+  completed Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  board Whiteboard @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([boardId])
+  @@map("board_todo_items")
+}

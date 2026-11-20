@@ -1,0 +1,14 @@
+{
+  "name": "collab-whiteboard-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Collaborative AI-Powered Smart Whiteboard Monorepo",
+  "scripts": {
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "build:server": "npm --prefix server run build",
+    "build:client": "npm --prefix client run build",
+    "prisma:push": "npm --prefix server run prisma:push",
+    "prisma:studio": "npm --prefix server run prisma:studio"
+  }
+}

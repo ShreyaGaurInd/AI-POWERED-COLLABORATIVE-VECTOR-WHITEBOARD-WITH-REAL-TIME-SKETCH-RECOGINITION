@@ -1,0 +1,532 @@
+import { Request, Response } from 'express';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { z } from 'zod';
+import { prisma } from '../config/db.js';
+import { ENV } from '../config/env.js';
+
+// Validation schemas
+const createBoardSchema = z.object({
+  title: z.string().min(1, 'Title is required').max(100, 'Title too long'),
+  folderId: z.string().nullable().optional(),
+  password: z.string().optional(),
+});
+
+const updateBoardSchema = z.object({
+  title: z.string().min(1, 'Title is required').max(100, 'Title too long'),
+});
+
+const moveBoardSchema = z.object({
+  folderId: z.string().nullable(),
+});
+
+const verifyAccessSchema = z.object({
+  password: z.string().min(1, 'Password is required'),
+});
+
+/**
+ * List all whiteboards accessible to the authenticated user
+ * (Owned boards + Shared boards)
+ * GET /api/whiteboards
+ */
+export async function getWhiteboards(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const folderId = req.query.folderId as string | undefined;
+
+  const whereClause: any = {
+    OR: [
+      { ownerId: userId },
+      { members: { some: { userId } } },
+    ],
+  };
+
+  if (folderId !== undefined) {
+    whereClause.folderId = folderId === 'root' ? null : folderId;
+  }
+
+  const boards = await prisma.whiteboard.findMany({
+    where: whereClause,
+    include: {
+      folder: {
+        select: { id: true, name: true, color: true },
+      },
+      owner: {
+        select: { id: true, fullName: true, avatarColor: true },
+      },
+      members: {
+        where: { userId },
+        select: { role: true },
+      },
+      _count: {
+        select: { members: true },
+      },
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
+
+  return res.json({
+    success: true,
+    data: {
+      whiteboards: boards.map((b) => ({
+        id: b.id,
+        title: b.title,
+        isProtected: b.isProtected,
+        isOwner: b.ownerId === userId,
+        userRole: b.ownerId === userId ? 'OWNER' : b.members[0]?.role || 'VIEWER',
+        folder: b.folder,
+        owner: b.owner,
+        memberCount: b._count.members,
+        createdAt: b.createdAt,
+        updatedAt: b.updatedAt,
+      })),
+    },
+  });
+}
+
+/**
+ * Create a new whiteboard
+ * POST /api/whiteboards
+ */
+export async function createWhiteboard(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const { title, folderId, password } = createBoardSchema.parse(req.body);
+
+  // If a folderId was provided, verify user owns that folder
+  if (folderId) {
+    const folder = await prisma.folder.findUnique({
+      where: { id: folderId },
+    });
+    if (!folder || folder.userId !== userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid folder selected.',
+      });
+    }
+  }
+
+  // Handle optional password protection (hashed with bcrypt 10 salt rounds)
+  let passwordHash: string | null = null;
+  let isProtected = false;
+
+  if (password && password.trim().length > 0) {
+    isProtected = true;
+    passwordHash = await bcrypt.hash(password.trim(), 10);
+  }
+
+  // Create board and add owner to whiteboard_members inside a single transaction
+  const newBoard = await prisma.$transaction(async (tx) => {
+    const board = await tx.whiteboard.create({
+      data: {
+        ownerId: userId,
+        folderId: folderId || null,
+        title: title.trim(),
+        passwordHash,
+        isProtected,
+      },
+      include: {
+        folder: {
+          select: { id: true, name: true, color: true },
+        },
+        owner: {
+          select: { id: true, fullName: true, avatarColor: true },
+        },
+      },
+    });
+
+    await tx.whiteboardMember.create({
+      data: {
+        boardId: board.id,
+        userId,
+        role: 'OWNER',
+      },
+    });
+
+    return board;
+  });
+
+  return res.status(201).json({
+    success: true,
+    message: 'Whiteboard created successfully',
+    data: {
+      whiteboard: {
+        id: newBoard.id,
+        title: newBoard.title,
+        isProtected: newBoard.isProtected,
+        isOwner: true,
+        userRole: 'OWNER',
+        folder: newBoard.folder,
+        owner: newBoard.owner,
+        memberCount: 1,
+        createdAt: newBoard.createdAt,
+        updatedAt: newBoard.updatedAt,
+      },
+    },
+  });
+}
+
+/**
+ * Rename whiteboard
+ * PUT /api/whiteboards/:id
+ */
+export async function updateWhiteboard(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const { id } = req.params;
+  const { title } = updateBoardSchema.parse(req.body);
+
+  // Check permissions: Owner or Editor can rename
+  const board = await prisma.whiteboard.findUnique({
+    where: { id },
+    include: {
+      members: {
+        where: { userId },
+      },
+    },
+  });
+
+  if (!board) {
+    return res.status(404).json({ success: false, message: 'Whiteboard not found' });
+  }
+
+  const isOwner = board.ownerId === userId;
+  const isEditor = board.members.some((m) => m.role === 'EDITOR' || m.role === 'OWNER');
+
+  if (!isOwner && !isEditor) {
+    return res.status(403).json({
+      success: false,
+      message: 'You do not have permission to modify this whiteboard.',
+    });
+  }
+
+  const updated = await prisma.whiteboard.update({
+    where: { id },
+    data: { title: title.trim() },
+    include: {
+      folder: { select: { id: true, name: true, color: true } },
+    },
+  });
+
+  return res.json({
+    success: true,
+    message: 'Whiteboard updated successfully',
+    data: {
+      whiteboard: {
+        id: updated.id,
+        title: updated.title,
+        folder: updated.folder,
+        updatedAt: updated.updatedAt,
+      },
+    },
+  });
+}
+
+/**
+ * Move whiteboard to a different folder
+ * PUT /api/whiteboards/:id/move
+ */
+export async function moveWhiteboard(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const { id } = req.params;
+  const { folderId } = moveBoardSchema.parse(req.body);
+
+  const board = await prisma.whiteboard.findUnique({
+    where: { id },
+  });
+
+  if (!board || board.ownerId !== userId) {
+    return res.status(403).json({
+      success: false,
+      message: 'Only the whiteboard owner can move it between folders.',
+    });
+  }
+
+  // If moving into a folder, verify that folder exists and belongs to user
+  if (folderId) {
+    const folder = await prisma.folder.findUnique({
+      where: { id: folderId },
+    });
+    if (!folder || folder.userId !== userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Target folder not found.',
+      });
+    }
+  }
+
+  const updated = await prisma.whiteboard.update({
+    where: { id },
+    data: { folderId: folderId || null },
+    include: {
+      folder: { select: { id: true, name: true, color: true } },
+    },
+  });
+
+  return res.json({
+    success: true,
+    message: 'Whiteboard moved successfully',
+    data: {
+      whiteboard: {
+        id: updated.id,
+        title: updated.title,
+        folder: updated.folder,
+      },
+    },
+  });
+}
+
+/**
+ * Delete a whiteboard
+ * DELETE /api/whiteboards/:id
+ */
+export async function deleteWhiteboard(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const { id } = req.params;
+
+  const board = await prisma.whiteboard.findUnique({
+    where: { id },
+  });
+
+  if (!board || board.ownerId !== userId) {
+    return res.status(403).json({
+      success: false,
+      message: 'Only the whiteboard owner can delete it.',
+    });
+  }
+
+  await prisma.whiteboard.delete({
+    where: { id },
+  });
+
+  return res.json({
+    success: true,
+    message: 'Whiteboard deleted successfully.',
+  });
+}
+
+/**
+ * Verify password for a protected whiteboard
+ * POST /api/whiteboards/:id/verify-access
+ */
+export async function verifyBoardAccess(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const { id } = req.params;
+  const { password } = verifyAccessSchema.parse(req.body);
+
+  const board = await prisma.whiteboard.findUnique({
+    where: { id },
+  });
+
+  if (!board) {
+    return res.status(404).json({ success: false, message: 'Whiteboard not found' });
+  }
+
+  if (!board.isProtected || !board.passwordHash) {
+    return res.json({
+      success: true,
+      message: 'This board is not password protected.',
+      data: {
+        boardSessionToken: jwt.sign(
+          { boardId: board.id, userId, access: 'GRANTED' },
+          ENV.JWT_SECRET,
+          { expiresIn: '24h' }
+        ),
+      },
+    });
+  }
+
+  // Compare password with bcrypt hash
+  const isMatch = await bcrypt.compare(password.trim(), board.passwordHash);
+  if (!isMatch) {
+    return res.status(401).json({
+      success: false,
+      message: 'Incorrect whiteboard password. Access denied.',
+    });
+  }
+
+  // Issue a 24h Board Session Token for unlocked access
+  const boardSessionToken = jwt.sign(
+    { boardId: board.id, userId, access: 'GRANTED' },
+    ENV.JWT_SECRET,
+    { expiresIn: '24h' }
+  );
+
+  return res.json({
+    success: true,
+    message: 'Password verified. Access granted.',
+    data: {
+      boardSessionToken,
+    },
+  });
+}
+
+/**
+ * Get chat messages for a whiteboard
+ * GET /api/whiteboards/:id/chat
+ */
+export async function getBoardChat(req: Request, res: Response) {
+  const { id: boardId } = req.params;
+
+  const messages = await prisma.boardChatMessage.findMany({
+    where: { boardId },
+    include: {
+      user: {
+        select: {
+          id: true,
+          fullName: true,
+          avatarColor: true,
+          email: true,
+        },
+      },
+    },
+    orderBy: { createdAt: 'asc' },
+    take: 200,
+  });
+
+  return res.json({
+    success: true,
+    data: { messages },
+  });
+}
+
+/**
+ * Send a chat message on a whiteboard
+ * POST /api/whiteboards/:id/chat
+ */
+export async function sendBoardChatMessage(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const { id: boardId } = req.params;
+  const { message } = req.body;
+
+  if (!message || !message.trim()) {
+    return res.status(400).json({ success: false, message: 'Message content is required.' });
+  }
+
+  const created = await prisma.boardChatMessage.create({
+    data: {
+      boardId,
+      userId,
+      message: message.trim(),
+    },
+    include: {
+      user: {
+        select: {
+          id: true,
+          fullName: true,
+          avatarColor: true,
+          email: true,
+        },
+      },
+    },
+  });
+
+  return res.status(201).json({
+    success: true,
+    data: created,
+  });
+}
+
+/**
+ * Get to-do checklist items for a whiteboard
+ * GET /api/whiteboards/:id/todos
+ */
+export async function getBoardTodos(req: Request, res: Response) {
+  const { id: boardId } = req.params;
+
+  const todos = await prisma.boardTodoItem.findMany({
+    where: { boardId },
+    include: {
+      user: {
+        select: {
+          id: true,
+          fullName: true,
+        },
+      },
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  return res.json({
+    success: true,
+    data: { todos },
+  });
+}
+
+/**
+ * Create a to-do item for a whiteboard
+ * POST /api/whiteboards/:id/todos
+ */
+export async function createBoardTodo(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const { id: boardId } = req.params;
+  const { task } = req.body;
+
+  if (!task || !task.trim()) {
+    return res.status(400).json({ success: false, message: 'Task text is required.' });
+  }
+
+  const created = await prisma.boardTodoItem.create({
+    data: {
+      boardId,
+      userId,
+      task: task.trim(),
+    },
+    include: {
+      user: {
+        select: {
+          id: true,
+          fullName: true,
+        },
+      },
+    },
+  });
+
+  return res.status(201).json({
+    success: true,
+    data: created,
+  });
+}
+
+/**
+ * Toggle completion status of a to-do item
+ * PATCH /api/whiteboards/:id/todos/:todoId
+ */
+export async function toggleBoardTodo(req: Request, res: Response) {
+  const { todoId } = req.params;
+  const { completed } = req.body;
+
+  const updated = await prisma.boardTodoItem.update({
+    where: { id: todoId },
+    data: {
+      completed: typeof completed === 'boolean' ? completed : undefined,
+    },
+    include: {
+      user: {
+        select: {
+          id: true,
+          fullName: true,
+        },
+      },
+    },
+  });
+
+  return res.json({
+    success: true,
+    data: updated,
+  });
+}
+
+/**
+ * Delete a to-do item
+ * DELETE /api/whiteboards/:id/todos/:todoId
+ */
+export async function deleteBoardTodo(req: Request, res: Response) {
+  const { todoId } = req.params;
+
+  await prisma.boardTodoItem.delete({
+    where: { id: todoId },
+  });
+
+  return res.json({
+    success: true,
+    message: 'To-do item deleted successfully.',
+  });
+}
