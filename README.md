@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Collaborative AI Smart Whiteboard (CollabWhiteboard)
 
 An enterprise-grade, real-time collaborative smart whiteboard featuring in-browser AI shape classification (trained on Google Quick, Draw!), custom spatial Quadtree indexing, presentation mode for educators, and granular role-based access control.
@@ -50,7 +49,5 @@ cd ../client
 npm install
 npm run dev
 ```
-=======
 # AI-POWERED-COLLABORATIVE-VECTOR-WHITEBOARD-WITH-REAL-TIME-SKETCH-RECOGINITION
 An AI-powered collaborative smart whiteboard for real-time drawing, brainstorming, and teamwork. Features include AI-based sketch recognition using CNN, sketch-to-vector conversion, WebSocket collaboration, folder organization, board sharing, MySQL database, and Quadtree-based canvas optimization for efficient object management.
->>>>>>> ef0707062e213a1e8cf3df3c4f1ced784fef1d18

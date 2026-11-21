@@ -17,7 +17,7 @@ const httpServer = http.createServer(app);
 // Initialize Socket.IO with CORS
 export const io = new SocketIOServer(httpServer, {
   cors: {
-    origin: '*', // In development allow all; configurable via CLIENT_URL
+    origin: [ENV.CLIENT_URL, 'http://localhost:5173'],
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     credentials: true,
   },
@@ -25,7 +25,7 @@ export const io = new SocketIOServer(httpServer, {
 
 // Global Middlewares
 app.use(cors({
-  origin: '*',
+  origin: [ENV.CLIENT_URL, 'http://localhost:5173'],
   credentials: true,
 }));
 app.use(express.json());
