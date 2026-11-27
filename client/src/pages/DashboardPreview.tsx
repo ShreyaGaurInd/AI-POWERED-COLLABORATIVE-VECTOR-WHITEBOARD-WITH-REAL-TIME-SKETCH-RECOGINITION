@@ -15,6 +15,7 @@ import { ShareBoardModal } from '../components/canvas/ShareBoardModal';
 import { 
   Plus, 
   Search, 
+  X,
   Folder as FolderIcon, 
   Layout, 
   Users, 
@@ -299,14 +300,22 @@ export const DashboardPreview: React.FC = () => {
     navigate(`/board/${board.id}`);
   };
 
+  // When user starts searching, automatically scope to all boards so results aren't
+  // confined to the currently selected folder or shared view.
+  const isSearching = searchQuery.trim().length > 0;
+
   // Filtered boards based on active view & search query
   const filteredBoards = whiteboards.filter((b) => {
-    // Search query match
+    const q = searchQuery.toLowerCase();
     const matchesSearch =
-      b.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (b.folder && b.folder.name.toLowerCase().includes(searchQuery.toLowerCase()));
+      !isSearching ||
+      b.title.toLowerCase().includes(q) ||
+      (b.folder && b.folder.name.toLowerCase().includes(q));
 
     if (!matchesSearch) return false;
+
+    // While a search query is active, show results across ALL boards
+    if (isSearching) return true;
 
     if (activeView === 'folder' && selectedFolderId) {
       return b.folder?.id === selectedFolderId;
@@ -318,6 +327,18 @@ export const DashboardPreview: React.FC = () => {
 
     return true; // 'all' view
   });
+
+  // Filtered folders shown in sidebar & folder grid
+  const filteredFolders = isSearching
+    ? folders.filter((f) => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
+    : folders;
+
+  // Filtered folder files (when inside a folder view & searching)
+  const filteredFolderFiles = isSearching
+    ? folderFiles.filter((f) =>
+        f.fileName.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : folderFiles;
 
   const selectedFolder = folders.find((f) => f.id === selectedFolderId);
 
@@ -336,8 +357,8 @@ export const DashboardPreview: React.FC = () => {
             </div>
           </div>
 
-          {/* Canva-style Global Search Bar */}
-          <div className="flex-1 max-w-lg hidden md:block">
+          {/* Global Search Bar */}
+          <div className="flex-1 max-w-lg">
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-400">
                 <Search className="w-4 h-4" />
@@ -346,9 +367,18 @@ export const DashboardPreview: React.FC = () => {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search your whiteboards or folders..."
-                className="w-full pl-10 pr-4 py-2 rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-800/60 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white dark:focus:bg-gray-900 transition-all text-sm"
+                placeholder="Search whiteboards, folders, files..."
+                className="w-full pl-10 pr-9 py-2 rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-800/60 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white dark:focus:bg-gray-900 transition-all text-sm"
               />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                  title="Clear search"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
             </div>
           </div>
 
@@ -454,10 +484,10 @@ export const DashboardPreview: React.FC = () => {
             </div>
 
             <div className="space-y-1">
-              {folders.length === 0 ? (
-                <p className="text-xs text-gray-400 px-3 py-2 italic">No folders yet</p>
+              {filteredFolders.length === 0 ? (
+                <p className="text-xs text-gray-400 px-3 py-2 italic">{isSearching ? 'No folders match' : 'No folders yet'}</p>
               ) : (
-                folders.map((f) => (
+                filteredFolders.map((f) => (
                   <FolderHoverCard key={f.id} folder={f} boards={whiteboards} side="right">
                   <div
                     onClick={() => {
@@ -617,9 +647,13 @@ export const DashboardPreview: React.FC = () => {
                     Click here to attach a PDF, text file, document, or image (up to 50MB)
                   </div>
                 </div>
+              ) : filteredFolderFiles.length === 0 ? (
+                <div className="p-4 rounded-2xl border border-dashed border-gray-200 dark:border-gray-800 text-center text-xs text-gray-400">
+                  No files matched your search query.
+                </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                  {folderFiles.map((file) => (
+                  {filteredFolderFiles.map((file) => (
                     <div
                       key={file.id}
                       className="p-3 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-750 rounded-2xl flex items-center justify-between hover:shadow-xs transition-all group"
@@ -761,9 +795,15 @@ export const DashboardPreview: React.FC = () => {
                     No folders created yet. Click "+ New Folder" to organize your boards!
                   </p>
                 </div>
+              ) : filteredFolders.length === 0 ? (
+                <div className="p-6 rounded-2xl border border-dashed border-gray-300 dark:border-gray-800 text-center">
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    No folders matched your search.
+                  </p>
+                </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  {folders.map((f) => (
+                  {filteredFolders.map((f) => (
                     <FolderHoverCard key={f.id} folder={f} boards={whiteboards} side="top">
                     <div
                       onClick={() => {
@@ -794,7 +834,9 @@ export const DashboardPreview: React.FC = () => {
           <section>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold text-gray-900 dark:text-white">
-                {activeView === 'folder'
+                {isSearching
+                  ? `Search results for "${searchQuery}"`
+                  : activeView === 'folder'
                   ? `Boards in ${selectedFolder?.name || 'Folder'}`
                   : activeView === 'shared'
                   ? 'Shared With You'
@@ -817,19 +859,29 @@ export const DashboardPreview: React.FC = () => {
                 </div>
                 <h3 className="text-base font-bold text-gray-900 dark:text-white">No whiteboards found</h3>
                 <p className="text-xs text-gray-500 dark:text-gray-400 max-w-sm mx-auto mt-1 mb-4">
-                  {searchQuery
-                    ? 'No boards matched your search query.'
+                  {isSearching
+                    ? `No boards matched "${searchQuery}".`
                     : activeView === 'folder'
                     ? 'This folder is currently empty.'
                     : 'Get started by creating your very first collaborative whiteboard!'}
                 </p>
-                <button
-                  onClick={() => setIsCreateBoardOpen(true)}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-medium text-xs shadow-md shadow-brand-500/20 transition-all"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Create Whiteboard</span>
-                </button>
+                {isSearching ? (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 font-medium text-xs transition-all"
+                  >
+                    <X className="w-4 h-4" />
+                    <span>Clear Search</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setIsCreateBoardOpen(true)}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-medium text-xs shadow-md shadow-brand-500/20 transition-all"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Create Whiteboard</span>
+                  </button>
+                )}
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
