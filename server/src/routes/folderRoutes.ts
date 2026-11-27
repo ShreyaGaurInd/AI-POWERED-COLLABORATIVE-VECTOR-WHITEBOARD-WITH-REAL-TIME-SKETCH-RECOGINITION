@@ -4,8 +4,12 @@ import {
   createFolder,
   updateFolder,
   deleteFolder,
+  getFolderFiles,
+  uploadFolderFile,
+  deleteFolderFile,
 } from '../controllers/folderController.js';
 import { authenticate } from '../middlewares/authMiddleware.js';
+import { fileUpload } from '../middlewares/uploadMiddleware.js';
 
 export const folderRouter = Router();
 
@@ -16,3 +20,8 @@ folderRouter.get('/', getFolders);
 folderRouter.post('/', createFolder);
 folderRouter.put('/:id', updateFolder);
 folderRouter.delete('/:id', deleteFolder);
+
+// Folder File Management
+folderRouter.get('/:id/files', getFolderFiles);
+folderRouter.post('/:id/files', fileUpload.single('file'), uploadFolderFile);
+folderRouter.delete('/:id/files/:fileId', deleteFolderFile);

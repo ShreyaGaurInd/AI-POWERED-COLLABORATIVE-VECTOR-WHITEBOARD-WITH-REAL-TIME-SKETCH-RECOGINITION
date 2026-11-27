@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { ThemeToggle } from '../components/ui/ThemeToggle';
 import { api } from '../services/api';
-import { FolderItem, WhiteboardItem } from '../types/dashboard';
+import { FolderItem, WhiteboardItem, FolderFileItem } from '../types/dashboard';
 import { CreateBoardModal } from '../components/dashboard/CreateBoardModal';
 import { CreateFolderModal } from '../components/dashboard/CreateFolderModal';
 import { MoveBoardModal } from '../components/dashboard/MoveBoardModal';
@@ -11,6 +11,7 @@ import { RenameBoardModal } from '../components/dashboard/RenameBoardModal';
 import { UnlockBoardModal } from '../components/dashboard/UnlockBoardModal';
 import { FolderHoverCard } from '../components/dashboard/FolderHoverCard';
 import { FriendsDrawer } from '../components/dashboard/FriendsDrawer';
+import { ShareBoardModal } from '../components/canvas/ShareBoardModal';
 import { 
   Plus, 
   Search, 
@@ -33,6 +34,10 @@ import {
   FolderInput,
   Loader2,
   UserPlus,
+  Upload,
+  FileText,
+  File as FileGenericIcon,
+  Download
 } from 'lucide-react';
 
 const PREVIEW_GRADIENTS = [
@@ -42,6 +47,14 @@ const PREVIEW_GRADIENTS = [
   'from-purple-500/20 via-pink-500/20 to-rose-500/20',
   'from-indigo-500/20 via-cyan-500/20 to-blue-500/20',
 ];
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+}
 
 export const DashboardPreview: React.FC = () => {
   const { user, logout } = useAuth();
@@ -67,7 +80,72 @@ export const DashboardPreview: React.FC = () => {
   const [boardToMove, setBoardToMove] = useState<WhiteboardItem | null>(null);
   const [boardToRename, setBoardToRename] = useState<WhiteboardItem | null>(null);
   const [boardToUnlock, setBoardToUnlock] = useState<WhiteboardItem | null>(null);
+  const [boardToShare, setBoardToShare] = useState<WhiteboardItem | null>(null);
   const [isFriendsDrawerOpen, setIsFriendsDrawerOpen] = useState(false);
+
+  // Folder files state (uploaded PDFs, TXT, documents)
+  const [folderFiles, setFolderFiles] = useState<FolderFileItem[]>([]);
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Load folder files when active folder changes
+  useEffect(() => {
+    if (selectedFolderId) {
+      api.getFolderFiles(selectedFolderId)
+        .then((res) => {
+          if (res.success) setFolderFiles(res.data.files);
+        })
+        .catch(() => setFolderFiles([]));
+    } else {
+      setFolderFiles([]);
+    }
+  }, [selectedFolderId]);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedFolderId) return;
+
+    try {
+      setIsUploadingFile(true);
+      const res = await api.uploadFolderFile(selectedFolderId, file);
+      if (res.success && res.data.file) {
+        setFolderFiles((prev) => [res.data.file, ...prev]);
+        // Update file count in folder list
+        setFolders((prev) =>
+          prev.map((f) =>
+            f.id === selectedFolderId
+              ? { ...f, fileCount: (f.fileCount || 0) + 1 }
+              : f
+          )
+        );
+      }
+    } catch (err: any) {
+      alert(err.message || 'Failed to upload file.');
+    } finally {
+      setIsUploadingFile(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleDeleteFile = async (file: FolderFileItem) => {
+    if (!window.confirm(`Delete file "${file.fileName}"?`)) return;
+
+    try {
+      const res = await api.deleteFolderFile(file.folderId, file.id);
+      if (res.success) {
+        setFolderFiles((prev) => prev.filter((f) => f.id !== file.id));
+        setFolders((prev) =>
+          prev.map((f) =>
+            f.id === file.folderId
+              ? { ...f, fileCount: Math.max(0, (f.fileCount || 1) - 1) }
+              : f
+          )
+        );
+      }
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete file.');
+    }
+  };
 
   // Load real folders and whiteboards from backend API
   const loadDashboardData = async () => {
@@ -453,12 +531,21 @@ export const DashboardPreview: React.FC = () => {
                     {selectedFolder.name}
                   </h1>
                   <p className="text-xs text-gray-500 dark:text-gray-400">
-                    {filteredBoards.length} whiteboard{filteredBoards.length === 1 ? '' : 's'} inside this folder
+                    {filteredBoards.length} whiteboard{filteredBoards.length === 1 ? '' : 's'}
+                    {folderFiles.length > 0 && ` • ${folderFiles.length} file${folderFiles.length === 1 ? '' : 's'}`}
                   </p>
                 </div>
               </div>
 
               <div className="flex items-center gap-2">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploadingFile}
+                  className="px-3 py-1.5 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors flex items-center gap-1.5 shadow-xs"
+                >
+                  {isUploadingFile ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                  <span>Upload File</span>
+                </button>
                 <button
                   onClick={() => {
                     setFolderToEdit(selectedFolder);
@@ -476,6 +563,111 @@ export const DashboardPreview: React.FC = () => {
                 </button>
               </div>
             </div>
+          )}
+
+          {/* Folder Uploaded Files & Documents */}
+          {activeView === 'folder' && selectedFolder && (
+            <section className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-3xl p-6 shadow-xs">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-emerald-500" />
+                    <span>Folder Files & Attachments</span>
+                  </h3>
+                  <p className="text-[11px] text-gray-400">
+                    Upload PDFs, notes, documents, or reference files
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileUpload}
+                    className="hidden"
+                    accept=".pdf,.txt,.docx,.doc,.xlsx,.csv,.png,.jpg,.jpeg,.json,.md"
+                  />
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploadingFile}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-semibold transition-all shadow-xs"
+                  >
+                    {isUploadingFile ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="w-3.5 h-3.5" />
+                    )}
+                    <span>{isUploadingFile ? 'Uploading...' : 'Upload File'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {folderFiles.length === 0 ? (
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  className="p-6 rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-800 hover:border-emerald-500 dark:hover:border-emerald-500 text-center cursor-pointer transition-colors bg-gray-50/50 dark:bg-gray-950/20"
+                >
+                  <div className="w-9 h-9 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto mb-2">
+                    <Upload className="w-4 h-4" />
+                  </div>
+                  <div className="text-xs font-semibold text-gray-800 dark:text-gray-200">
+                    No files uploaded yet in this folder
+                  </div>
+                  <div className="text-[11px] text-gray-400 mt-0.5">
+                    Click here to attach a PDF, text file, document, or image (up to 50MB)
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                  {folderFiles.map((file) => (
+                    <div
+                      key={file.id}
+                      className="p-3 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-750 rounded-2xl flex items-center justify-between hover:shadow-xs transition-all group"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 rounded-xl bg-emerald-100/80 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                          {file.fileType.includes('pdf') || file.fileName.endsWith('.pdf') ? (
+                            <FileText className="w-4 h-4" />
+                          ) : (
+                            <FileGenericIcon className="w-4 h-4" />
+                          )}
+                        </div>
+                        <div className="truncate">
+                          <div className="text-xs font-semibold text-gray-900 dark:text-white truncate" title={file.fileName}>
+                            {file.fileName}
+                          </div>
+                          <div className="text-[10px] text-gray-400 flex items-center gap-1.5 mt-0.5">
+                            <span>{formatBytes(file.fileSize)}</span>
+                            <span>•</span>
+                            <span>{new Date(file.createdAt).toLocaleDateString()}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0 ml-2">
+                        <a
+                          href={`http://localhost:5000${file.fileUrl}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          download={file.fileName}
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition-colors"
+                          title="Download / View File"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                        </a>
+                        <button
+                          onClick={() => handleDeleteFile(file)}
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 opacity-0 group-hover:opacity-100 transition-all"
+                          title="Delete File"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
           )}
 
           {/* Quick Start Templates */}
@@ -696,6 +888,16 @@ export const DashboardPreview: React.FC = () => {
                                 <button
                                   onClick={() => {
                                     setOpenMenuBoardId(null);
+                                    setBoardToShare(board);
+                                  }}
+                                  className="w-full px-3.5 py-2 text-left text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center gap-2"
+                                >
+                                  <Share2 className="w-3.5 h-3.5 text-indigo-500" />
+                                  <span>Share & Invite</span>
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setOpenMenuBoardId(null);
                                     setBoardToRename(board);
                                   }}
                                   className="w-full px-3.5 py-2 text-left text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center gap-2"
@@ -835,6 +1037,12 @@ export const DashboardPreview: React.FC = () => {
         isOpen={isFriendsDrawerOpen}
         onClose={() => setIsFriendsDrawerOpen(false)}
         currentUserId={user?.id}
+      />
+
+      <ShareBoardModal
+        isOpen={boardToShare !== null}
+        onClose={() => setBoardToShare(null)}
+        board={boardToShare}
       />
     </div>
   );

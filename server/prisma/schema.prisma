@@ -37,13 +37,14 @@ model User {
   receivedMessages    DirectMessage[]      @relation("ReceivedMessages")
   boardChatMessages   BoardChatMessage[]
   boardTodoItems      BoardTodoItem[]
+  folderFiles         FolderFile[]
 
   @@map("users")
 }
 
 // -------------------------------------------------------------
 // 2. Folder Model
-// Enables Canva-like organizational hierarchy for whiteboards.
+// Enables Canva-like organizational hierarchy for whiteboards and files.
 // -------------------------------------------------------------
 model Folder {
   id        String   @id @default(uuid())
@@ -56,9 +57,33 @@ model Folder {
   // Relationships
   user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   whiteboards Whiteboard[]
+  files       FolderFile[]
 
   @@index([userId])
   @@map("folders")
+}
+
+// -------------------------------------------------------------
+// 2b. FolderFile Model
+// Allows users to store arbitrary documents (PDF, TXT, DOCX, images, etc.) in a folder.
+// -------------------------------------------------------------
+model FolderFile {
+  id        String   @id @default(uuid())
+  folderId  String   @map("folder_id")
+  userId    String   @map("user_id")
+  fileName  String   @map("file_name")
+  fileSize  Int      @map("file_size")
+  fileType  String   @map("file_type")
+  fileUrl   String   @map("file_url") @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  folder    Folder   @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([folderId])
+  @@index([userId])
+  @@map("folder_files")
 }
 
 // -------------------------------------------------------------

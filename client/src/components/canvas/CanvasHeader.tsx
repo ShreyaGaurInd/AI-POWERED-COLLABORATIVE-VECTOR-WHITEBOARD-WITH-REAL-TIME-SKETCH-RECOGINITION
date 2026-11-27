@@ -10,7 +10,8 @@ import {
   Lock,
   Layers,
   Trash2,
-  MessageSquare
+  MessageSquare,
+  Share2
 } from 'lucide-react';
 import { ThemeToggle } from '../ui/ThemeToggle';
 import { WhiteboardItem } from '../../types/dashboard';
@@ -29,6 +30,7 @@ interface CanvasHeaderProps {
   onTogglePresentationMode: () => void;
   spatialItemCount: number;
   onOpenClearModal: () => void;
+  onOpenShareModal?: () => void;
   isChatDrawerOpen?: boolean;
   onToggleChatDrawer?: () => void;
   chatMessageCount?: number;
@@ -49,6 +51,7 @@ export const CanvasHeader: React.FC<CanvasHeaderProps> = ({
   onTogglePresentationMode,
   spatialItemCount,
   onOpenClearModal,
+  onOpenShareModal,
   isChatDrawerOpen = false,
   onToggleChatDrawer,
   chatMessageCount = 0,
@@ -196,6 +199,24 @@ export const CanvasHeader: React.FC<CanvasHeaderProps> = ({
         >
           <Trash2 className="w-4 h-4" />
         </button>
+
+        {/* Share & Collaborators Button */}
+        {onOpenShareModal && (
+          <button
+            onClick={onOpenShareModal}
+            className="bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 rounded-2xl px-3 py-2 text-xs font-semibold shadow-lg backdrop-blur-md flex items-center gap-1.5 transition-all"
+            title="Share whiteboard & invite collaborators"
+          >
+            <Share2 className="w-4 h-4" />
+            <span className="hidden sm:inline">Share</span>
+            {board && board.memberCount > 1 && (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-indigo-200 dark:bg-indigo-800 text-indigo-700 dark:text-indigo-300">
+                {board.memberCount}
+              </span>
+            )}
+          </button>
+        )}
+
         <button
           onClick={onTogglePresentationMode}
           className="bg-brand-600 hover:bg-brand-700 text-white rounded-2xl px-3.5 py-2 text-xs font-semibold shadow-lg shadow-brand-500/20 flex items-center gap-1.5 transition-all"

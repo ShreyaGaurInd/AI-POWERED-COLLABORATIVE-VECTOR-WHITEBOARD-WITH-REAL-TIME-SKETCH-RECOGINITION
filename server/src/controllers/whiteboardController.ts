@@ -530,3 +530,198 @@ export async function deleteBoardTodo(req: Request, res: Response) {
     message: 'To-do item deleted successfully.',
   });
 }
+
+/**
+ * List all members / collaborators on a whiteboard
+ * GET /api/whiteboards/:id/members
+ */
+export async function getBoardMembers(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const { id } = req.params;
+
+  const board = await prisma.whiteboard.findUnique({
+    where: { id },
+    include: {
+      owner: { select: { id: true, fullName: true, email: true, avatarColor: true } },
+      members: {
+        include: {
+          user: { select: { id: true, fullName: true, email: true, avatarColor: true } },
+        },
+        orderBy: { invitedAt: 'asc' },
+      },
+    },
+  });
+
+  if (!board) {
+    return res.status(404).json({ success: false, message: 'Whiteboard not found.' });
+  }
+
+  // Verify caller has access
+  const isOwner = board.ownerId === userId;
+  const isMember = board.members.some((m) => m.userId === userId);
+  if (!isOwner && !isMember) {
+    return res.status(403).json({ success: false, message: 'Access denied.' });
+  }
+
+  return res.json({
+    success: true,
+    data: {
+      owner: board.owner,
+      isOwner,
+      members: board.members.map((m) => ({
+        id: m.id,
+        userId: m.userId,
+        role: m.role,
+        invitedAt: m.invitedAt,
+        user: m.user,
+      })),
+    },
+  });
+}
+
+/**
+ * Add / Invite a collaborator to a whiteboard (without needing to be friends first)
+ * POST /api/whiteboards/:id/members
+ * Body: { emailOrName: string, role?: 'EDITOR' | 'VIEWER' }
+ */
+export async function addBoardMember(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const { id } = req.params;
+  const { emailOrName, role = 'EDITOR' } = req.body;
+
+  if (!emailOrName || typeof emailOrName !== 'string' || !emailOrName.trim()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Please provide the user email or full name to invite.',
+    });
+  }
+
+  const query = emailOrName.trim().toLowerCase();
+
+  const board = await prisma.whiteboard.findUnique({
+    where: { id },
+    include: {
+      members: true,
+    },
+  });
+
+  if (!board) {
+    return res.status(404).json({ success: false, message: 'Whiteboard not found.' });
+  }
+
+  // Only OWNER or EDITOR can invite collaborators
+  const isOwner = board.ownerId === userId;
+  const userMember = board.members.find((m) => m.userId === userId);
+  if (!isOwner && (!userMember || userMember.role !== 'EDITOR')) {
+    return res.status(403).json({
+      success: false,
+      message: 'Only the board owner or editors can invite collaborators.',
+    });
+  }
+
+  // Find the target user by email or full name
+  const targetUser = await prisma.user.findFirst({
+    where: {
+      OR: [
+        { email: query },
+        { fullName: { contains: query } },
+      ],
+    },
+    select: { id: true, fullName: true, email: true, avatarColor: true },
+  });
+
+  if (!targetUser) {
+    return res.status(404).json({
+      success: false,
+      message: `No user found matching "${emailOrName}". Please check the spelling or ask them to register first.`,
+    });
+  }
+
+  // Check if target user is the board owner
+  if (targetUser.id === board.ownerId) {
+    return res.status(400).json({
+      success: false,
+      message: `${targetUser.fullName} is already the owner of this whiteboard.`,
+    });
+  }
+
+  const memberRole = role === 'VIEWER' ? 'VIEWER' : 'EDITOR';
+
+  // Check if already a member
+  const existingMember = await prisma.whiteboardMember.findFirst({
+    where: { boardId: id, userId: targetUser.id },
+  });
+
+  let member;
+  if (existingMember) {
+    member = await prisma.whiteboardMember.update({
+      where: { id: existingMember.id },
+      data: { role: memberRole },
+      include: {
+        user: { select: { id: true, fullName: true, email: true, avatarColor: true } },
+      },
+    });
+  } else {
+    member = await prisma.whiteboardMember.create({
+      data: {
+        boardId: id,
+        userId: targetUser.id,
+        role: memberRole,
+      },
+      include: {
+        user: { select: { id: true, fullName: true, email: true, avatarColor: true } },
+      },
+    });
+  }
+
+  return res.status(201).json({
+    success: true,
+    message: `${targetUser.fullName} has been added as ${memberRole.toLowerCase()}!`,
+    data: { member },
+  });
+}
+
+/**
+ * Remove a collaborator from a whiteboard
+ * DELETE /api/whiteboards/:id/members/:memberId
+ */
+export async function removeBoardMember(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const { id, memberId } = req.params;
+
+  const board = await prisma.whiteboard.findUnique({
+    where: { id },
+  });
+
+  if (!board) {
+    return res.status(404).json({ success: false, message: 'Whiteboard not found.' });
+  }
+
+  // Only board owner can remove collaborators (or a member can remove themselves)
+  const member = await prisma.whiteboardMember.findUnique({
+    where: { id: memberId },
+  });
+
+  if (!member || member.boardId !== id) {
+    return res.status(404).json({ success: false, message: 'Collaborator not found on this board.' });
+  }
+
+  const isOwner = board.ownerId === userId;
+  const isSelf = member.userId === userId;
+
+  if (!isOwner && !isSelf) {
+    return res.status(403).json({
+      success: false,
+      message: 'Only the board owner can remove collaborators.',
+    });
+  }
+
+  await prisma.whiteboardMember.delete({
+    where: { id: memberId },
+  });
+
+  return res.json({
+    success: true,
+    message: 'Collaborator removed successfully.',
+  });
+}

@@ -1,5 +1,5 @@
 import { AuthResponse, MeResponse } from '../types/auth';
-import { FolderItem, WhiteboardItem } from '../types/dashboard';
+import { FolderItem, WhiteboardItem, FolderFileItem, BoardMemberItem } from '../types/dashboard';
 import {
   FriendUser,
   FriendRequestItem,
@@ -242,6 +242,75 @@ class ApiService {
 
   async deleteBoardTodo(boardId: string, todoId: string): Promise<{ success: boolean; message: string }> {
     return this.request(`/whiteboards/${boardId}/todos/${todoId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // ---------------- WHITEBOARD COLLABORATORS ENDPOINTS ----------------
+  async getBoardMembers(boardId: string): Promise<{
+    success: boolean;
+    data: {
+      owner: { id: string; fullName: string; email: string; avatarColor: string };
+      isOwner: boolean;
+      members: BoardMemberItem[];
+    };
+  }> {
+    return this.request(`/whiteboards/${boardId}/members`, { method: 'GET' });
+  }
+
+  async addBoardMember(boardId: string, payload: { emailOrName: string; role?: 'EDITOR' | 'VIEWER' }): Promise<{
+    success: boolean;
+    message: string;
+    data: { member: BoardMemberItem };
+  }> {
+    return this.request(`/whiteboards/${boardId}/members`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async removeBoardMember(boardId: string, memberId: string): Promise<{ success: boolean; message: string }> {
+    return this.request(`/whiteboards/${boardId}/members/${memberId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // ---------------- FOLDER FILES ENDPOINTS ----------------
+  async getFolderFiles(folderId: string): Promise<{ success: boolean; data: { files: FolderFileItem[] } }> {
+    return this.request(`/folders/${folderId}/files`, { method: 'GET' });
+  }
+
+  async uploadFolderFile(folderId: string, file: File): Promise<{
+    success: boolean;
+    message: string;
+    data: { file: FolderFileItem };
+  }> {
+    const token = this.getToken();
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${API_BASE_URL}/folders/${folderId}/files`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: formData,
+    });
+
+    const data = await response.json().catch(() => ({
+      success: false,
+      message: 'Network error during file upload',
+    }));
+
+    if (!response.ok) {
+      throw new Error(data.message || `File upload failed with status ${response.status}`);
+    }
+
+    return data;
+  }
+
+  async deleteFolderFile(folderId: string, fileId: string): Promise<{ success: boolean; message: string }> {
+    return this.request(`/folders/${folderId}/files/${fileId}`, {
       method: 'DELETE',
     });
   }

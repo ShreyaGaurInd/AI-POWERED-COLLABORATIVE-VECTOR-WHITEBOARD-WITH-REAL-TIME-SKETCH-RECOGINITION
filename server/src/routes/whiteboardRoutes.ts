@@ -12,6 +12,9 @@ import {
   createBoardTodo,
   toggleBoardTodo,
   deleteBoardTodo,
+  getBoardMembers,
+  addBoardMember,
+  removeBoardMember,
 } from '../controllers/whiteboardController.js';
 import { authenticate } from '../middlewares/authMiddleware.js';
 
@@ -26,6 +29,11 @@ whiteboardRouter.put('/:id', updateWhiteboard);
 whiteboardRouter.put('/:id/move', moveWhiteboard);
 whiteboardRouter.delete('/:id', deleteWhiteboard);
 whiteboardRouter.post('/:id/verify-access', verifyBoardAccess);
+
+// Whiteboard Collaborator / Member Management
+whiteboardRouter.get('/:id/members', getBoardMembers);
+whiteboardRouter.post('/:id/members', addBoardMember);
+whiteboardRouter.delete('/:id/members/:memberId', removeBoardMember);
 
 // Whiteboard Collaborative Chat
 whiteboardRouter.get('/:id/chat', getBoardChat);

@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
+import fs from 'fs';
+import path from 'path';
 import { prisma } from '../config/db.js';
 
 // Validation schemas for folders
@@ -19,7 +21,7 @@ export async function getFolders(req: Request, res: Response) {
     where: { userId },
     include: {
       _count: {
-        select: { whiteboards: true },
+        select: { whiteboards: true, files: true },
       },
     },
     orderBy: { createdAt: 'desc' },
@@ -33,6 +35,7 @@ export async function getFolders(req: Request, res: Response) {
         name: f.name,
         color: f.color,
         whiteboardCount: f._count.whiteboards,
+        fileCount: f._count.files,
         createdAt: f.createdAt,
         updatedAt: f.updatedAt,
       })),
@@ -159,5 +162,138 @@ export async function deleteFolder(req: Request, res: Response) {
   return res.json({
     success: true,
     message: 'Folder deleted and whiteboards moved to root level.',
+  });
+}
+
+/**
+ * List all files in a folder
+ * GET /api/folders/:id/files
+ */
+export async function getFolderFiles(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const { id } = req.params;
+
+  const folder = await prisma.folder.findUnique({
+    where: { id },
+  });
+
+  if (!folder || folder.userId !== userId) {
+    return res.status(404).json({
+      success: false,
+      message: 'Folder not found.',
+    });
+  }
+
+  const files = await prisma.folderFile.findMany({
+    where: { folderId: id },
+    include: {
+      user: {
+        select: { id: true, fullName: true, avatarColor: true },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  return res.json({
+    success: true,
+    data: { files },
+  });
+}
+
+/**
+ * Upload a file into a folder (PDF, TXT, DOCX, images, etc.)
+ * POST /api/folders/:id/files
+ */
+export async function uploadFolderFile(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const { id } = req.params;
+
+  if (!req.file) {
+    return res.status(400).json({
+      success: false,
+      message: 'No file uploaded. Please choose a file.',
+    });
+  }
+
+  const folder = await prisma.folder.findUnique({
+    where: { id },
+  });
+
+  if (!folder || folder.userId !== userId) {
+    // Clean up uploaded file if folder invalid
+    if (req.file.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    return res.status(404).json({
+      success: false,
+      message: 'Folder not found.',
+    });
+  }
+
+  // Construct URL accessible via Express static /uploads
+  const fileUrl = `/uploads/folder-files/${req.file.filename}`;
+
+  const createdFile = await prisma.folderFile.create({
+    data: {
+      folderId: id,
+      userId,
+      fileName: req.file.originalname,
+      fileSize: req.file.size,
+      fileType: req.file.mimetype,
+      fileUrl,
+    },
+    include: {
+      user: {
+        select: { id: true, fullName: true, avatarColor: true },
+      },
+    },
+  });
+
+  return res.status(201).json({
+    success: true,
+    message: `File "${req.file.originalname}" uploaded successfully!`,
+    data: { file: createdFile },
+  });
+}
+
+/**
+ * Delete a file from a folder
+ * DELETE /api/folders/:id/files/:fileId
+ */
+export async function deleteFolderFile(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const { id, fileId } = req.params;
+
+  const file = await prisma.folderFile.findUnique({
+    where: { id: fileId },
+    include: { folder: true },
+  });
+
+  if (!file || file.folderId !== id || file.folder.userId !== userId) {
+    return res.status(404).json({
+      success: false,
+      message: 'File not found.',
+    });
+  }
+
+  // Delete physical file on disk
+  try {
+    const filename = path.basename(file.fileUrl);
+    const diskPath = path.join(process.cwd(), 'uploads', 'folder-files', filename);
+    if (fs.existsSync(diskPath)) {
+      fs.unlinkSync(diskPath);
+    }
+  } catch (err) {
+    console.error('Error deleting file from disk:', err);
+  }
+
+  // Delete from DB
+  await prisma.folderFile.delete({
+    where: { id: fileId },
+  });
+
+  return res.json({
+    success: true,
+    message: 'File deleted successfully.',
   });
 }

@@ -68,11 +68,20 @@ export const FriendsDrawer: React.FC<FriendsDrawerProps> = ({
     });
 
     socket.on('direct:received', (msg: DirectMessageItem) => {
-      setChatMessages((prev) => [...prev.filter((m) => m.id !== msg.id), msg]);
+      // Only append if it belongs to currently selected conversation or notification
+      setChatMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev;
+        return [...prev, msg];
+      });
     });
 
     socket.on('direct:sent', (msg: DirectMessageItem) => {
-      setChatMessages((prev) => [...prev.filter((m) => m.id !== msg.id), msg]);
+      setChatMessages((prev) => {
+        // Replace any temporary message with matching content or append
+        const filtered = prev.filter((m) => !m.id.startsWith('temp-') || m.message !== msg.message);
+        if (filtered.some((m) => m.id === msg.id)) return filtered;
+        return [...filtered, msg];
+      });
     });
 
     return () => {
@@ -157,22 +166,39 @@ export const FriendsDrawer: React.FC<FriendsDrawerProps> = ({
 
     const text = chatInput.trim();
     setChatInput('');
+    const token = localStorage.getItem('collab_token');
 
-    // Emit via socket for instant broadcast
+    // Optimistically add message to state immediately for instant feedback
+    const tempId = `temp-${Date.now()}`;
+    const optimisticMsg: DirectMessageItem = {
+      id: tempId,
+      senderId: currentUserId || '',
+      receiverId: selectedFriend.id,
+      message: text,
+      createdAt: new Date().toISOString(),
+    };
+    setChatMessages((prev) => [...prev, optimisticMsg]);
+
+    // Send via socket
     if (socketRef.current) {
       socketRef.current.emit('direct:send', {
         receiverId: selectedFriend.id,
         message: text,
+        token,
       });
-    } else {
-      // Fallback REST
+    }
+
+    // Also send via REST if socket not connected
+    if (!socketRef.current || !socketRef.current.connected) {
       try {
         const res = await api.sendDirectMessage(selectedFriend.id, text);
-        if (res.success) {
-          setChatMessages((prev) => [...prev, res.data]);
+        if (res.success && res.data) {
+          setChatMessages((prev) =>
+            prev.map((m) => (m.id === tempId ? res.data : m))
+          );
         }
       } catch (err) {
-        console.error('Failed to send direct message:', err);
+        console.error('Failed to send direct message via REST:', err);
       }
     }
   };

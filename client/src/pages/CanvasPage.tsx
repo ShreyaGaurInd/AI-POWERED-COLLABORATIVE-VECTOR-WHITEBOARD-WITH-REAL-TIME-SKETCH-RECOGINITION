@@ -23,6 +23,7 @@ import { ShapeRecognizer } from '../engine/ShapeRecognizer';
 import { CanvasToolbar } from '../components/canvas/CanvasToolbar';
 import { CanvasHeader } from '../components/canvas/CanvasHeader';
 import { ClearBoardModal } from '../components/canvas/ClearBoardModal';
+import { ShareBoardModal } from '../components/canvas/ShareBoardModal';
 import { UnlockBoardModal } from '../components/dashboard/UnlockBoardModal';
 import { BoardChatAndTodosDrawer } from '../components/canvas/BoardChatAndTodosDrawer';
 import { BoardChatMessageItem, BoardTodoItem } from '../types/collab';
@@ -123,6 +124,7 @@ export const CanvasPage: React.FC = () => {
   const [boardToUnlock, setBoardToUnlock] = useState<WhiteboardItem | null>(null);
   const [isUnlockModalOpen, setIsUnlockModalOpen] = useState(false);
   const [isClearModalOpen, setIsClearModalOpen] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
 
   // Whiteboard Collaboration Drawer (Chat & To-Dos) state
   const [isChatDrawerOpen, setIsChatDrawerOpen] = useState(false);
@@ -1422,6 +1424,7 @@ export const CanvasPage: React.FC = () => {
         onTogglePresentationMode={handleTogglePresentationMode}
         spatialItemCount={spatialItemCount}
         onOpenClearModal={() => setIsClearModalOpen(true)}
+        onOpenShareModal={() => setIsShareModalOpen(true)}
         isChatDrawerOpen={isChatDrawerOpen}
         onToggleChatDrawer={() => setIsChatDrawerOpen((prev) => !prev)}
         chatMessageCount={chatMessages.length}
@@ -1665,6 +1668,13 @@ export const CanvasPage: React.FC = () => {
         onClose={() => setIsClearModalOpen(false)}
         onConfirm={handleConfirmClearBoard}
         itemCount={spatialItemCount}
+      />
+
+      {/* Share Board & Direct Collaborator Invite Modal */}
+      <ShareBoardModal
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        board={board}
       />
 
       {/* Whiteboard Real-Time Collaborative Chat & Action Items Drawer */}

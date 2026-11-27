@@ -1,5 +1,6 @@
 import express from 'express';
 import http from 'http';
+import path from 'path';
 import cors from 'cors';
 import { Server as SocketIOServer } from 'socket.io';
 import { ENV } from './config/env.js';
@@ -30,6 +31,7 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // Health Check Endpoint
 app.get('/api/health', (req, res) => {

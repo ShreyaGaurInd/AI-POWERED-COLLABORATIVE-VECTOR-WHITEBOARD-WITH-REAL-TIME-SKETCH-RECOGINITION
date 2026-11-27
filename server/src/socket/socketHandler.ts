@@ -129,6 +129,28 @@ export function setupSocketHandlers(io: SocketIOServer): void {
     let currentBoardId: string | null = null;
     let currentUser: SocketUser | null = null;
 
+    // Authenticate user right away if token passed in handshake auth or query
+    const handshakeToken = (socket.handshake.auth?.token as string) || (socket.handshake.query?.token as string);
+    if (handshakeToken) {
+      try {
+        const decoded = jwt.verify(handshakeToken, ENV.JWT_SECRET) as { userId: string };
+        prisma.user.findUnique({
+          where: { id: decoded.userId },
+          select: { id: true, fullName: true, avatarColor: true, email: true },
+        }).then((user) => {
+          if (user) {
+            currentUser = {
+              userId: user.id,
+              fullName: user.fullName,
+              avatarColor: user.avatarColor,
+              email: user.email,
+            };
+            socket.join(`user:${user.id}`);
+          }
+        }).catch(() => {});
+      } catch (e) {}
+    }
+
     // ── 1. BOARD:JOIN ────────────────────────────────────────────────────────
     // Client emits this after navigating to /board/:id
     // Payload: { boardId, token }
@@ -560,21 +582,64 @@ export function setupSocketHandlers(io: SocketIOServer): void {
     });
 
     // ── 10. DIRECT MESSAGING BETWEEN FRIENDS ─────────────────────────────────
-    socket.on('user:join', (payload: { token: string }) => {
+    socket.on('user:join', async (payload: { token: string }) => {
       try {
+        if (!payload?.token) return;
         const decoded = jwt.verify(payload.token, ENV.JWT_SECRET) as { userId: string };
-        socket.join(`user:${decoded.userId}`);
+        const user = await prisma.user.findUnique({
+          where: { id: decoded.userId },
+          select: { id: true, fullName: true, avatarColor: true, email: true },
+        });
+        if (user) {
+          currentUser = {
+            userId: user.id,
+            fullName: user.fullName,
+            avatarColor: user.avatarColor,
+            email: user.email,
+          };
+          socket.join(`user:${user.id}`);
+        }
       } catch (e) {}
     });
 
-    socket.on('direct:send', async (payload: { receiverId: string; message: string }) => {
+    socket.on('direct:send', async (payload: { receiverId: string; message: string; token?: string }) => {
       const text = payload.message?.trim();
-      if (!currentUser?.userId || !payload.receiverId || !text) return;
+      if (!payload.receiverId || !text) return;
+
+      let senderId = currentUser?.userId;
+      if (!senderId) {
+        // Fallback: decode token from payload or handshake
+        const tokenToVerify = payload.token || (socket.handshake.auth?.token as string);
+        if (tokenToVerify) {
+          try {
+            const decoded = jwt.verify(tokenToVerify, ENV.JWT_SECRET) as { userId: string };
+            senderId = decoded.userId;
+            const u = await prisma.user.findUnique({
+              where: { id: senderId },
+              select: { id: true, fullName: true, avatarColor: true, email: true },
+            });
+            if (u) {
+              currentUser = {
+                userId: u.id,
+                fullName: u.fullName,
+                avatarColor: u.avatarColor,
+                email: u.email,
+              };
+              socket.join(`user:${u.id}`);
+            }
+          } catch (e) {}
+        }
+      }
+
+      if (!senderId) {
+        console.warn('[Socket.IO] direct:send unauthenticated — dropped message');
+        return;
+      }
 
       try {
         const direct = await prisma.directMessage.create({
           data: {
-            senderId: currentUser.userId,
+            senderId,
             receiverId: payload.receiverId,
             message: text,
           },
@@ -585,7 +650,8 @@ export function setupSocketHandlers(io: SocketIOServer): void {
         });
 
         io.to(`user:${payload.receiverId}`).emit('direct:received', direct);
-        io.to(`user:${currentUser.userId}`).emit('direct:sent', direct);
+        io.to(`user:${senderId}`).emit('direct:sent', direct);
+        socket.emit('direct:sent', direct);
       } catch (err) {
         console.error('[Socket.IO] direct:send error:', err);
       }
