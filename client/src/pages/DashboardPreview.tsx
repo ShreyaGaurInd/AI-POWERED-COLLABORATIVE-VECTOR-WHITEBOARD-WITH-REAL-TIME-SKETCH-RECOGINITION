@@ -326,7 +326,7 @@ export const DashboardPreview: React.FC = () => {
       return !b.isOwner;
     }
 
-    return true; // 'all' view
+    return b.isOwner; // 'all' view shows boards you created/own; shared boards live in 'Shared with me'
   });
 
   // Filtered folders shown in sidebar & folder grid
