@@ -281,12 +281,10 @@ export function useSocket({
 
     // Create Socket.IO connection to backend
     // We use the Vite proxy (same origin) in dev; in production use the absolute URL.
-    const socket = io(
-      import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || 'http://localhost:5000',
-      {
-        transports: ['websocket', 'polling'],
-        auth: { token },
-      });
+    const socket = io('http://localhost:5000', {
+      transports: ['websocket', 'polling'],
+      auth: { token },
+    });
     socketRef.current = socket;
 
     // ── Join board room on connect ──────────────────────────────────────────

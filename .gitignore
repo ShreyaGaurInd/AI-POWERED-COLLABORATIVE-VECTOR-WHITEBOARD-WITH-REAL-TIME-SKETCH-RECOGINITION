@@ -53,3 +53,4 @@ desktop.ini
 # Temporary / Scratch
 *.tmp
 *.bak
+*.sql
