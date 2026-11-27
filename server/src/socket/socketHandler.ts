@@ -174,6 +174,28 @@ export function setupSocketHandlers(io: SocketIOServer): void {
           return;
         }
 
+        // ── Link-access auto-membership ───────────────────────────────────────
+        // If user is not already a member, check the board's linkAccess setting.
+        // If linkAccess is VIEWER or EDITOR, auto-add them as a member.
+        const board = await prisma.whiteboard.findUnique({
+          where: { id: boardId },
+          include: { members: { where: { userId: user.id } } },
+        });
+
+        if (board && board.ownerId !== user.id && board.members.length === 0) {
+          if (board.linkAccess === 'VIEWER' || board.linkAccess === 'EDITOR') {
+            await prisma.whiteboardMember.upsert({
+              where: { boardId_userId: { boardId, userId: user.id } },
+              create: { boardId, userId: user.id, role: board.linkAccess },
+              update: {},
+            });
+          } else {
+            // linkAccess is NONE — deny entry
+            socket.emit('error', { message: 'You do not have access to this board. Ask the owner to invite you.' });
+            return;
+          }
+        }
+
         currentUser = {
           userId: user.id,
           fullName: user.fullName,

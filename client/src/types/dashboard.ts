@@ -38,6 +38,20 @@ export interface BoardMemberItem {
   };
 }
 
+export interface BoardInviteItem {
+  id: string;
+  boardId: string;
+  boardTitle: string;
+  role: 'EDITOR' | 'VIEWER';
+  status: 'PENDING' | 'ACCEPTED' | 'DECLINED';
+  invitedBy: {
+    id: string;
+    fullName: string;
+    avatarColor: string;
+  };
+  createdAt: string;
+}
+
 export interface BoardOwner {
   id: string;
   fullName: string;
@@ -54,6 +68,7 @@ export interface WhiteboardItem {
   id: string;
   title: string;
   isProtected: boolean;
+  linkAccess?: 'NONE' | 'VIEWER' | 'EDITOR';
   isOwner: boolean;
   userRole: 'OWNER' | 'EDITOR' | 'VIEWER';
   folder: BoardFolder | null;

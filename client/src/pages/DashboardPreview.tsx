@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { ThemeToggle } from '../components/ui/ThemeToggle';
@@ -11,6 +11,7 @@ import { RenameBoardModal } from '../components/dashboard/RenameBoardModal';
 import { UnlockBoardModal } from '../components/dashboard/UnlockBoardModal';
 import { FolderHoverCard } from '../components/dashboard/FolderHoverCard';
 import { FriendsDrawer } from '../components/dashboard/FriendsDrawer';
+import { InviteNotificationBell } from '../components/dashboard/InviteNotificationBell';
 import { ShareBoardModal } from '../components/canvas/ShareBoardModal';
 import { 
   Plus, 
@@ -149,7 +150,7 @@ export const DashboardPreview: React.FC = () => {
   };
 
   // Load real folders and whiteboards from backend API
-  const loadDashboardData = async () => {
+  const loadDashboardData = useCallback(async () => {
     try {
       setIsLoading(true);
       const [foldersRes, boardsRes] = await Promise.all([
@@ -164,7 +165,7 @@ export const DashboardPreview: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadDashboardData();
@@ -401,7 +402,11 @@ export const DashboardPreview: React.FC = () => {
               <span className="hidden sm:inline">Friends</span>
             </button>
 
+            <InviteNotificationBell onInviteAccepted={loadDashboardData} />
+
             <ThemeToggle />
+
+
 
             {user && (
               <div className="flex items-center gap-3 pl-2 border-l border-gray-200 dark:border-gray-800">

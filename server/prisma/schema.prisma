@@ -38,6 +38,8 @@ model User {
   boardChatMessages   BoardChatMessage[]
   boardTodoItems      BoardTodoItem[]
   folderFiles         FolderFile[]
+  sentBoardInvites    BoardInvite[]        @relation("SentBoardInvites")
+  receivedBoardInvites BoardInvite[]       @relation("ReceivedBoardInvites")
 
   @@map("users")
 }
@@ -90,16 +92,24 @@ model FolderFile {
 // 3. Whiteboard Model
 // Represents a collaborative canvas space.
 // If isProtected = true, passwordHash stores a bcrypt hash of the board password.
+// linkAccess controls what permissions people get when they open the board via shared link.
 // -------------------------------------------------------------
+enum LinkAccessLevel {
+  NONE   // Link does not grant access (must be explicitly invited)
+  VIEWER // Anyone with link gets view-only access
+  EDITOR // Anyone with link gets edit access
+}
+
 model Whiteboard {
-  id           String   @id @default(uuid())
-  ownerId      String   @map("owner_id")
-  folderId     String?  @map("folder_id") // Nullable: boards can exist at root level
-  title        String   @default("Untitled Whiteboard")
-  passwordHash String?  @map("password_hash") // Optional board protection password
-  isProtected  Boolean  @default(false) @map("is_protected")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id           String           @id @default(uuid())
+  ownerId      String           @map("owner_id")
+  folderId     String?          @map("folder_id") // Nullable: boards can exist at root level
+  title        String           @default("Untitled Whiteboard")
+  passwordHash String?          @map("password_hash") // Optional board protection password
+  isProtected  Boolean          @default(false) @map("is_protected")
+  linkAccess   LinkAccessLevel  @default(NONE) @map("link_access")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
 
   // Relationships
   owner          User               @relation("OwnerWhiteboards", fields: [ownerId], references: [id], onDelete: Cascade)
@@ -110,6 +120,7 @@ model Whiteboard {
   stickers       Sticker[]
   chatMessages   BoardChatMessage[]
   todoItems      BoardTodoItem[]
+  invites        BoardInvite[]
 
   @@index([ownerId])
   @@index([folderId])
@@ -124,6 +135,36 @@ enum BoardRole {
   OWNER
   EDITOR
   VIEWER
+}
+
+// -------------------------------------------------------------
+// 4b. BoardInvite Model
+// Invitation to join a whiteboard. User must accept before being added as a member.
+// -------------------------------------------------------------
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+
+model BoardInvite {
+  id         String       @id @default(uuid())
+  boardId    String       @map("board_id")
+  invitedBy  String       @map("invited_by")
+  inviteeId  String       @map("invitee_id")
+  role       BoardRole    @default(EDITOR)
+  status     InviteStatus @default(PENDING)
+  createdAt  DateTime     @default(now()) @map("created_at")
+  updatedAt  DateTime     @updatedAt @map("updated_at")
+
+  // Relationships
+  board   Whiteboard @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  inviter User       @relation("SentBoardInvites", fields: [invitedBy], references: [id], onDelete: Cascade)
+  invitee User       @relation("ReceivedBoardInvites", fields: [inviteeId], references: [id], onDelete: Cascade)
+
+  @@unique([boardId, inviteeId]) // One pending invite per user per board
+  @@index([inviteeId, status])
+  @@map("board_invites")
 }
 
 model WhiteboardMember {

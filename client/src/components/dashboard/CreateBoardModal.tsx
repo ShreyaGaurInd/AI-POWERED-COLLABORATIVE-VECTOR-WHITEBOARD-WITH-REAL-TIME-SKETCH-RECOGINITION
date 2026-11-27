@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Lock, Folder, Loader2, Sparkles, Presentation, StickyNote, Plus } from 'lucide-react';
 import { FolderItem } from '../../types/dashboard';
 
@@ -23,6 +23,17 @@ export const CreateBoardModal: React.FC<CreateBoardModalProps> = ({
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Sync folder selection whenever the modal opens or the defaultFolderId changes
+  useEffect(() => {
+    if (isOpen) {
+      setFolderId(defaultFolderId);
+      setTitle('');
+      setPassword('');
+      setIsProtected(false);
+      setError(null);
+    }
+  }, [isOpen, defaultFolderId]);
 
   if (!isOpen) return null;
 

@@ -15,6 +15,9 @@ import {
   getBoardMembers,
   addBoardMember,
   removeBoardMember,
+  getMyInvites,
+  respondToInvite,
+  updateLinkAccess,
 } from '../controllers/whiteboardController.js';
 import { authenticate } from '../middlewares/authMiddleware.js';
 
@@ -30,10 +33,17 @@ whiteboardRouter.put('/:id/move', moveWhiteboard);
 whiteboardRouter.delete('/:id', deleteWhiteboard);
 whiteboardRouter.post('/:id/verify-access', verifyBoardAccess);
 
+// Link access control
+whiteboardRouter.patch('/:id/link-access', updateLinkAccess);
+
 // Whiteboard Collaborator / Member Management
 whiteboardRouter.get('/:id/members', getBoardMembers);
 whiteboardRouter.post('/:id/members', addBoardMember);
 whiteboardRouter.delete('/:id/members/:memberId', removeBoardMember);
+
+// Board Invites (confirm before joining)
+whiteboardRouter.get('/invites/my', getMyInvites);
+whiteboardRouter.patch('/invites/:inviteId', respondToInvite);
 
 // Whiteboard Collaborative Chat
 whiteboardRouter.get('/:id/chat', getBoardChat);

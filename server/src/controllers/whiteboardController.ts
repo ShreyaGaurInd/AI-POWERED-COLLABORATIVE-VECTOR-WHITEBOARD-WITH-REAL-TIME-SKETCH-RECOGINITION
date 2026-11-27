@@ -71,6 +71,7 @@ export async function getWhiteboards(req: Request, res: Response) {
         id: b.id,
         title: b.title,
         isProtected: b.isProtected,
+        linkAccess: b.linkAccess,
         isOwner: b.ownerId === userId,
         userRole: b.ownerId === userId ? 'OWNER' : b.members[0]?.role || 'VIEWER',
         folder: b.folder,
@@ -568,6 +569,7 @@ export async function getBoardMembers(req: Request, res: Response) {
     data: {
       owner: board.owner,
       isOwner,
+      linkAccess: board.linkAccess,
       members: board.members.map((m) => ({
         id: m.id,
         userId: m.userId,
@@ -581,6 +583,7 @@ export async function getBoardMembers(req: Request, res: Response) {
 
 /**
  * Add / Invite a collaborator to a whiteboard (without needing to be friends first)
+ * Now creates a PENDING invite rather than directly adding the member.
  * POST /api/whiteboards/:id/members
  * Body: { emailOrName: string, role?: 'EDITOR' | 'VIEWER' }
  */
@@ -645,39 +648,153 @@ export async function addBoardMember(req: Request, res: Response) {
     });
   }
 
-  const memberRole = role === 'VIEWER' ? 'VIEWER' : 'EDITOR';
-
   // Check if already a member
   const existingMember = await prisma.whiteboardMember.findFirst({
     where: { boardId: id, userId: targetUser.id },
   });
-
-  let member;
   if (existingMember) {
-    member = await prisma.whiteboardMember.update({
-      where: { id: existingMember.id },
-      data: { role: memberRole },
-      include: {
-        user: { select: { id: true, fullName: true, email: true, avatarColor: true } },
-      },
-    });
-  } else {
-    member = await prisma.whiteboardMember.create({
-      data: {
-        boardId: id,
-        userId: targetUser.id,
-        role: memberRole,
-      },
-      include: {
-        user: { select: { id: true, fullName: true, email: true, avatarColor: true } },
-      },
+    return res.status(400).json({
+      success: false,
+      message: `${targetUser.fullName} is already a collaborator on this whiteboard.`,
     });
   }
 
+  const memberRole = role === 'VIEWER' ? 'VIEWER' : 'EDITOR';
+
+  // Check if a pending invite already exists
+  const existingInvite = await prisma.boardInvite.findUnique({
+    where: { boardId_inviteeId: { boardId: id, inviteeId: targetUser.id } },
+  });
+
+  if (existingInvite && existingInvite.status === 'PENDING') {
+    return res.status(400).json({
+      success: false,
+      message: `An invite has already been sent to ${targetUser.fullName}. Waiting for their response.`,
+    });
+  }
+
+  // Upsert invite (re-invite if previously declined)
+  const invite = await prisma.boardInvite.upsert({
+    where: { boardId_inviteeId: { boardId: id, inviteeId: targetUser.id } },
+    create: {
+      boardId: id,
+      invitedBy: userId,
+      inviteeId: targetUser.id,
+      role: memberRole as any,
+      status: 'PENDING',
+    },
+    update: {
+      invitedBy: userId,
+      role: memberRole as any,
+      status: 'PENDING',
+    },
+    include: {
+      invitee: { select: { id: true, fullName: true, email: true, avatarColor: true } },
+    },
+  });
+
   return res.status(201).json({
     success: true,
-    message: `${targetUser.fullName} has been added as ${memberRole.toLowerCase()}!`,
-    data: { member },
+    message: `Invite sent to ${targetUser.fullName}! They need to accept before joining.`,
+    data: {
+      invite: {
+        id: invite.id,
+        inviteeId: invite.inviteeId,
+        role: invite.role,
+        status: invite.status,
+        user: invite.invitee,
+      },
+    },
+  });
+}
+
+/**
+ * Get all pending board invites for the authenticated user
+ * GET /api/whiteboards/invites
+ */
+export async function getMyInvites(req: Request, res: Response) {
+  const userId = req.user!.id;
+
+  const invites = await prisma.boardInvite.findMany({
+    where: { inviteeId: userId, status: 'PENDING' },
+    include: {
+      board: { select: { id: true, title: true } },
+      inviter: { select: { id: true, fullName: true, avatarColor: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  return res.json({
+    success: true,
+    data: {
+      invites: invites.map((inv) => ({
+        id: inv.id,
+        boardId: inv.boardId,
+        boardTitle: inv.board.title,
+        role: inv.role,
+        status: inv.status,
+        invitedBy: inv.inviter,
+        createdAt: inv.createdAt,
+      })),
+    },
+  });
+}
+
+/**
+ * Accept or decline a board invite
+ * PATCH /api/whiteboards/invites/:inviteId
+ * Body: { action: 'accept' | 'decline' }
+ */
+export async function respondToInvite(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const { inviteId } = req.params;
+  const { action } = req.body;
+
+  if (action !== 'accept' && action !== 'decline') {
+    return res.status(400).json({ success: false, message: 'Action must be "accept" or "decline".' });
+  }
+
+  const invite = await prisma.boardInvite.findUnique({
+    where: { id: inviteId },
+    include: { board: true },
+  });
+
+  if (!invite || invite.inviteeId !== userId) {
+    return res.status(404).json({ success: false, message: 'Invite not found.' });
+  }
+
+  if (invite.status !== 'PENDING') {
+    return res.status(400).json({
+      success: false,
+      message: `This invite was already ${invite.status.toLowerCase()}.`,
+    });
+  }
+
+  if (action === 'decline') {
+    await prisma.boardInvite.update({
+      where: { id: inviteId },
+      data: { status: 'DECLINED' },
+    });
+    return res.json({ success: true, message: 'Invite declined.' });
+  }
+
+  // Accept: add user as member and mark invite accepted (in a transaction)
+  await prisma.$transaction([
+    prisma.whiteboardMember.upsert({
+      where: { boardId_userId: { boardId: invite.boardId, userId } },
+      create: { boardId: invite.boardId, userId, role: invite.role },
+      update: { role: invite.role },
+    }),
+    prisma.boardInvite.update({
+      where: { id: inviteId },
+      data: { status: 'ACCEPTED' },
+    }),
+  ]);
+
+  return res.json({
+    success: true,
+    message: `You joined "${invite.board.title}" as ${invite.role.toLowerCase()}!`,
+    data: { boardId: invite.boardId },
   });
 }
 
@@ -723,5 +840,47 @@ export async function removeBoardMember(req: Request, res: Response) {
   return res.json({
     success: true,
     message: 'Collaborator removed successfully.',
+  });
+}
+
+/**
+ * Update the link-access level for a whiteboard
+ * PATCH /api/whiteboards/:id/link-access
+ * Body: { linkAccess: 'NONE' | 'VIEWER' | 'EDITOR' }
+ */
+export async function updateLinkAccess(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const { id } = req.params;
+  const { linkAccess } = req.body;
+
+  if (!['NONE', 'VIEWER', 'EDITOR'].includes(linkAccess)) {
+    return res.status(400).json({
+      success: false,
+      message: 'linkAccess must be one of: NONE, VIEWER, EDITOR',
+    });
+  }
+
+  const board = await prisma.whiteboard.findUnique({ where: { id } });
+
+  if (!board) {
+    return res.status(404).json({ success: false, message: 'Whiteboard not found.' });
+  }
+
+  if (board.ownerId !== userId) {
+    return res.status(403).json({
+      success: false,
+      message: 'Only the board owner can change link access settings.',
+    });
+  }
+
+  await prisma.whiteboard.update({
+    where: { id },
+    data: { linkAccess: linkAccess as any },
+  });
+
+  return res.json({
+    success: true,
+    message: `Link access updated to ${linkAccess}.`,
+    data: { linkAccess },
   });
 }

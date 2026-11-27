@@ -1,5 +1,5 @@
 import { AuthResponse, MeResponse } from '../types/auth';
-import { FolderItem, WhiteboardItem, FolderFileItem, BoardMemberItem } from '../types/dashboard';
+import { FolderItem, WhiteboardItem, FolderFileItem, BoardMemberItem, BoardInviteItem } from '../types/dashboard';
 import {
   FriendUser,
   FriendRequestItem,
@@ -261,7 +261,7 @@ class ApiService {
   async addBoardMember(boardId: string, payload: { emailOrName: string; role?: 'EDITOR' | 'VIEWER' }): Promise<{
     success: boolean;
     message: string;
-    data: { member: BoardMemberItem };
+    data: { invite: { id: string; inviteeId: string; role: string; status: string; user: { id: string; fullName: string; email: string; avatarColor: string } } };
   }> {
     return this.request(`/whiteboards/${boardId}/members`, {
       method: 'POST',
@@ -272,6 +272,32 @@ class ApiService {
   async removeBoardMember(boardId: string, memberId: string): Promise<{ success: boolean; message: string }> {
     return this.request(`/whiteboards/${boardId}/members/${memberId}`, {
       method: 'DELETE',
+    });
+  }
+
+  async updateLinkAccess(boardId: string, linkAccess: 'NONE' | 'VIEWER' | 'EDITOR'): Promise<{
+    success: boolean;
+    message: string;
+    data: { linkAccess: string };
+  }> {
+    return this.request(`/whiteboards/${boardId}/link-access`, {
+      method: 'PATCH',
+      body: JSON.stringify({ linkAccess }),
+    });
+  }
+
+  async getMyInvites(): Promise<{ success: boolean; data: { invites: BoardInviteItem[] } }> {
+    return this.request('/whiteboards/invites/my', { method: 'GET' });
+  }
+
+  async respondToInvite(inviteId: string, action: 'accept' | 'decline'): Promise<{
+    success: boolean;
+    message: string;
+    data?: { boardId: string };
+  }> {
+    return this.request(`/whiteboards/invites/${inviteId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ action }),
     });
   }
 
